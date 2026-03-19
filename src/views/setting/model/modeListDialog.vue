@@ -146,6 +146,8 @@ const websites = ref<Record<string, string>>({
   gemini: "https://ai.google.dev/gemini-api/docs/api-key?hl=zh-cn",
   t8star: "https://ai.t8star.cn",
   grsai: "https://grsai.ai/zh/dashboard/api-keys",
+  qingyuntop: "https://qingyuntop.top",
+  kieai: "https://kie.ai",
 });
 
 const currentWebsite = computed(() => {
@@ -169,6 +171,8 @@ const manufacturerNames: Record<string, string> = {
   modelScope: "魔塔",
   xai: "XAI",
   grsai: "Grsai",
+  qingyuntop: "QingyunTop",
+  kieai: "KieAI",
   other: "其他",
 };
 
@@ -190,6 +194,8 @@ function getManufacturerColor(manufacturer: string): string {
     modelScope: "#634BFE",
     xai: "red",
     grsai: "#2B7FFF",
+    qingyuntop: "#4C9AFF",
+    kieai: "#6366F1",
     other: "default",
   };
   return colors[manufacturer] || "default";
@@ -259,6 +265,12 @@ const manufacturerDefaultBaseUrls: Record<string, Record<string, string>> = {
     text: "https://ai.t8star.cn/v1",
     image: "",
     video: "https://ai.t8star.cn/v2/videos/generations|https://ai.t8star.cn/v2/videos/generations/{taskId}",
+  },
+  qingyuntop: {
+    video: "https://api.qingyuntop.top/v1/video/create|https://api.qingyuntop.top/v1/video/query?id={taskId}",
+  },
+  kieai: {
+    video: "https://api.kie.ai/api/v1/veo/generate|https://api.kie.ai/api/v1/veo/record-info?taskId={taskId}",
   },
   modelScope: {
     text: "https://api-inference.modelscope.cn/v1",
@@ -562,6 +574,13 @@ const videoModelPresets = ref<Record<string, { label: string; value: string }[]>
   //   { label: "viduq1-classic", value: "viduq1-classic" },
   //   { label: "vidu2.0", value: "vidu2.0" },
   // ],
+  qingyuntop: [
+    { label: "veo3.1-fast", value: "veo3.1-fast" },
+    { label: "veo3.1-fast-4k", value: "veo3.1-fast-4k" },
+    { label: "veo3.1-pro", value: "veo3.1-pro" },
+    { label: "veo3.1-pro-4k", value: "veo3.1-pro-4k" },
+  ],
+  kieai: [{ label: "veo3_fast", value: "veo3_fast" }],
 });
 
 // 生成视频模型卡片列表

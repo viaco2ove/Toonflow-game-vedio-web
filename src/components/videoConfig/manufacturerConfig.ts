@@ -94,6 +94,8 @@ export const manufacturerLabels: Record<string, string> = {
   // apimart: "Apimart(Sora)",
   openAi: "OpenAI(Sora)",
   t8star: "T8Star",
+  qingyuntop: "QingyunTop",
+  kieai: "KieAI",
   kling: "可灵",
   vidu: "Vidu",
   wan: "万象",

@@ -353,6 +353,8 @@ const websites = ref<Record<string, string>>({
   runninghub: "https://www.runninghub.cn/enterprise-api/consumerApi",
   gemini: "https://ai.google.dev/gemini-api/docs/api-key?hl=zh-cn",
   t8star: "https://ai.t8star.cn",
+  qingyuntop: "https://qingyuntop.top",
+  kieai: "https://kie.ai",
 });
 
 const currentWebsite = computed(() => {
@@ -373,6 +375,8 @@ const manufacturerNames: Record<string, string> = {
   runninghub: "RunningHUB",
   gemini: "Gemini",
   t8star: "T8Star",
+  qingyuntop: "QingyunTop",
+  kieai: "KieAI",
   other: "其他",
 };
 
@@ -414,6 +418,12 @@ const manufacturerDefaultBaseUrls: Record<string, Record<string, string>> = {
   },
   t8star: {
     text: "https://ai.t8star.cn/v1",
+  },
+  qingyuntop: {
+    video: "https://api.qingyuntop.top/v1/video/create|https://api.qingyuntop.top/v1/video/query?id={taskId}",
+  },
+  kieai: {
+    video: "https://api.kie.ai/api/v1/veo/generate|https://api.kie.ai/api/v1/veo/record-info?taskId={taskId}",
   },
 };
 

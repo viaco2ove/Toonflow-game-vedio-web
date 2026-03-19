@@ -15,6 +15,18 @@
             @change="handleConfigFormChange" />
         </div>
 
+        <div class="script-section">
+          <h3 class="section-title">剧本参考</h3>
+          <div class="script-meta" v-if="scriptTitle">{{ scriptTitle }}</div>
+          <div class="script-body" :class="{ loading: scriptLoading }">
+            <div v-if="scriptLoading" class="script-loading">
+              <div class="loading-spinner"></div>
+              <span>加载剧本中...</span>
+            </div>
+            <div v-else class="script-content">{{ scriptContent || "暂无剧本内容" }}</div>
+          </div>
+        </div>
+
         <!-- 生成按钮 -->
         <div class="action-section">
           <a-button type="primary" size="large" block :loading="isGenerating" @click="handleGenerate">
@@ -136,13 +148,16 @@ const emit = defineEmits<{
 
 const modalVisible = defineModel<boolean>({});
 const store = videoStore();
-const { videoConfigs } = storeToRefs(store);
+const { videoConfigs, currentProjectId } = storeToRefs(store);
 const isDraftMode = computed(() => Boolean(props.draftConfig));
 
 const isGenerating = ref(false);
 const videoPlayerVisible = ref(false);
 const currentPlayVideo = ref<VideoResult | null>(null);
 const videoRef = ref<HTMLVideoElement | null>(null);
+const scriptContent = ref("");
+const scriptTitle = ref("");
+const scriptLoading = ref(false);
 
 // 可编辑配置（将 VideoConfig 转换为 VideoConfigData 格式）
 const editableConfig = ref<VideoConfigData | null>(null);
@@ -178,6 +193,31 @@ watch(modalVisible, (v) => {
     getModelList();
   }
 });
+
+async function loadScriptContent() {
+  const scriptId = Number(config.value?.scriptId || props.draftConfig?.scriptId || 0);
+  const projectId = Number(config.value?.projectId || currentProjectId.value || 0);
+  if (!scriptId || !projectId) {
+    scriptContent.value = "";
+    scriptTitle.value = "";
+    return;
+  }
+
+  scriptLoading.value = true;
+  try {
+    const { data } = await axios.post("/outline/getPartScript", { projectId });
+    const list = Array.isArray(data) ? data : [];
+    const target = list.find((item: any) => Number(item?.id) === scriptId);
+    scriptContent.value = String(target?.content || "");
+    scriptTitle.value = target?.name ? `剧本：${target.name}` : `剧本：第${scriptId}集`;
+  } catch (error) {
+    console.error("获取剧本失败:", error);
+    scriptContent.value = "";
+    scriptTitle.value = "";
+  } finally {
+    scriptLoading.value = false;
+  }
+}
 // 监听配置变化，初始化可编辑配置
 watch(
   config,
@@ -199,6 +239,16 @@ watch(
       };
     } else {
       editableConfig.value = null;
+    }
+  },
+  { immediate: true },
+);
+
+watch(
+  () => [modalVisible.value, config.value?.scriptId, config.value?.projectId, props.draftConfig?.scriptId],
+  ([visible]) => {
+    if (visible) {
+      void loadScriptContent();
     }
   },
   { immediate: true },
@@ -412,6 +462,56 @@ onMounted(() => {
         font-size: 12px;
         color: #9ca3af;
         text-align: center;
+      }
+    }
+
+    .script-section {
+      background: #f9fafb;
+      border-radius: 12px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+
+      .script-meta {
+        font-size: 12px;
+        color: #6b7280;
+      }
+
+      .script-body {
+        min-height: 140px;
+        max-height: 260px;
+        overflow: auto;
+        background: #fff;
+        border-radius: 10px;
+        border: 1px solid #e5e7eb;
+        padding: 12px;
+        font-size: 12px;
+        color: #374151;
+        line-height: 1.6;
+        white-space: pre-wrap;
+
+        &.loading {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .script-loading {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #9ca3af;
+
+          .loading-spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(147, 51, 234, 0.2);
+            border-top-color: #9333ea;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+          }
+        }
       }
     }
   }

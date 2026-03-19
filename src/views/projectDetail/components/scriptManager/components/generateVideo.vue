@@ -192,6 +192,8 @@ const manufacturerLabels: Record<string, string> = {
   runninghub: "Sora",
   openAi: "OpenAI",
   t8star: "t8star",
+  qingyuntop: "QingyunTop",
+  kieai: "KieAI",
 };
 
 function getManufacturerLabel(manufacturer: string): string {
