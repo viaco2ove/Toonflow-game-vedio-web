@@ -48,16 +48,22 @@
                 <span class="previewTimeTotal">{{ formatSeconds(totalDuration) }}</span>
               </div>
               <div class="previewActionCenter">
-                <a-button size="small" @click="playFromPlayhead" :disabled="!timelineClips.length">播放</a-button>
-                <a-button size="small" @click="pausePreview" :disabled="!previewPlaying">暂停</a-button>
+                <a-button class="transportBtn" type="primary" @click="togglePreviewPlayback" :disabled="!timelineClips.length">
+                  {{ previewPlaying ? "暂停" : "播放" }}
+                </a-button>
               </div>
               <div class="previewActionRight">
+                <div class="zoomControl">
+                  <button class="zoomBtn" type="button" :disabled="!canZoomOut" @click="zoomOutTimeline">-</button>
+                  <button class="zoomReset" type="button" @click="resetTimelineZoom">{{ zoomPercent }}%</button>
+                  <button class="zoomBtn" type="button" :disabled="!canZoomIn" @click="zoomInTimeline">+</button>
+                </div>
                 <a-button size="small" @click="togglePreviewFullscreen">{{ isPreviewFullscreen ? "退出预览全屏" : "预览全屏" }}</a-button>
               </div>
             </div>
           </div>
 
-          <div class="timelineScroller" ref="scrollerRef" @mousedown="handleTimelineMouseDown">
+          <div class="timelineScroller" ref="scrollerRef" @mousedown="handleTimelineMouseDown" @wheel="handleTimelineWheel">
             <div class="timelineContent" :style="{ width: `${timelineWidth}px` }">
               <div class="ruler">
                 <div
@@ -65,7 +71,7 @@
                   :key="`tick-${tick}`"
                   class="rulerTick"
                   :class="{ major: isMajorTick(tick), anchor: isAnchorTick(tick) }"
-                  :style="{ left: `${TRACK_LABEL_WIDTH + tick * PIXELS_PER_SECOND}px` }">
+                  :style="{ left: `${TRACK_LABEL_WIDTH + tick * pixelsPerSecond}px` }">
                   <span v-if="isAnchorTick(tick)">{{ tick }}s</span>
                 </div>
               </div>
@@ -88,7 +94,7 @@
                       :key="`video-${clip.config.id}`"
                       class="clipItem video"
                       :class="{ active: activeConfigId === clip.config.id, muted: isTrackMuted('video', 1) }"
-                      :style="{ left: `${clip.start * PIXELS_PER_SECOND}px`, width: `${clip.duration * PIXELS_PER_SECOND}px` }"
+                      :style="{ left: `${clip.start * pixelsPerSecond}px`, width: `${clip.duration * pixelsPerSecond}px` }"
                       @click.stop="selectConfig(clip.config)">
                       <img v-if="clip.result?.firstFrame" :src="clip.result.firstFrame" />
                       <div v-else class="clipPlaceholder">视频</div>
@@ -119,7 +125,7 @@
                       :key="`audio-${clip.config.id}`"
                       class="clipItem audio"
                       :class="{ active: activeConfigId === clip.config.id, muted: isTrackMuted('audio', lane) }"
-                      :style="{ left: `${clip.start * PIXELS_PER_SECOND}px`, width: `${clip.duration * PIXELS_PER_SECOND}px` }"
+                      :style="{ left: `${clip.start * pixelsPerSecond}px`, width: `${clip.duration * pixelsPerSecond}px` }"
                       @click.stop="selectConfig(clip.config)">
                       <div class="waveform">
                         <svg v-if="getWaveform(clip.config.audioPath || clip.config.ttsAudioPath)" viewBox="0 0 100 40" preserveAspectRatio="none">
@@ -162,7 +168,7 @@
                       :key="`dialogue-${clip.config.id}`"
                       class="clipItem dialogue"
                       :class="{ active: activeConfigId === clip.config.id, muted: isTrackMuted('dialogue', lane) }"
-                      :style="{ left: `${clip.start * PIXELS_PER_SECOND}px`, width: `${clip.duration * PIXELS_PER_SECOND}px` }"
+                      :style="{ left: `${clip.start * pixelsPerSecond}px`, width: `${clip.duration * pixelsPerSecond}px` }"
                       @click.stop="selectConfig(clip.config)">
                       <div class="waveform">
                         <svg v-if="getWaveform(clip.config.ttsAudioPath || clip.config.audioPath)" viewBox="0 0 100 40" preserveAspectRatio="none">
@@ -407,7 +413,11 @@ const activeInspectorSection = ref<InspectorSection>("clip");
 const trackStates = ref<Record<string, { muted: boolean; visible: boolean }>>({});
 
 const TRACK_LABEL_WIDTH = 100;
-const PIXELS_PER_SECOND = 60;
+const ZOOM_LEVELS = [40, 50, 60, 80, 100, 120, 150, 180];
+const DEFAULT_PIXELS_PER_SECOND = 60;
+const defaultZoomIndex = Math.max(0, ZOOM_LEVELS.indexOf(DEFAULT_PIXELS_PER_SECOND));
+const zoomIndex = ref(defaultZoomIndex);
+const AUX_DRIFT_THRESHOLD = 0.12;
 const modalWidth = computed(() => (isModalExpanded.value ? "96vw" : 1280));
 const modalStyle = computed(() => ({
   top: isModalExpanded.value ? "2vh" : "60px",
@@ -416,7 +426,6 @@ const modalBodyStyle = computed(() => ({
   height: isModalExpanded.value ? "88vh" : "72vh",
   overflow: "hidden",
 }));
-const audioPreferenceStorageKey = computed(() => `timeline-audio-preferences:${props.projectId || 0}:${props.scriptId || 0}`);
 
 const orderedConfigs = computed(() => {
   const list = [...currentConfigs.value];
@@ -447,10 +456,14 @@ const totalDuration = computed(() => {
   return last.start + last.duration;
 });
 
-const timelineWidth = computed(() => Math.max(totalDuration.value * PIXELS_PER_SECOND + 200, 800));
+const pixelsPerSecond = computed(() => ZOOM_LEVELS[zoomIndex.value] || DEFAULT_PIXELS_PER_SECOND);
+const zoomPercent = computed(() => Math.round((pixelsPerSecond.value / DEFAULT_PIXELS_PER_SECOND) * 100));
+const canZoomIn = computed(() => zoomIndex.value < ZOOM_LEVELS.length - 1);
+const canZoomOut = computed(() => zoomIndex.value > 0);
+const timelineWidth = computed(() => Math.max(totalDuration.value * pixelsPerSecond.value + 200, 800));
 
 const playheadSeconds = ref(0);
-const playheadX = computed(() => TRACK_LABEL_WIDTH + playheadSeconds.value * PIXELS_PER_SECOND);
+const playheadX = computed(() => TRACK_LABEL_WIDTH + playheadSeconds.value * pixelsPerSecond.value);
 const previewPlaying = ref(false);
 const previewIndex = ref<number | null>(null);
 const globalProgressPercent = computed(() => {
@@ -498,6 +511,9 @@ watch(
     if (val) {
       inspectorPanelVisible.value = true;
       activeInspectorSection.value = "clip";
+      zoomIndex.value = defaultZoomIndex;
+      audioVariantOverrides.value = {};
+      audioHistoryByConfig.value = {};
       refreshData();
       return;
     }
@@ -656,34 +672,11 @@ function normalizeAudioUrl(url?: string | null) {
 }
 
 function persistAudioPreferences() {
-  if (!props.projectId || !props.scriptId) return;
-  try {
-    localStorage.setItem(
-      audioPreferenceStorageKey.value,
-      JSON.stringify({
-        overrides: audioVariantOverrides.value,
-        history: audioHistoryByConfig.value,
-      }),
-    );
-  } catch {}
+  // 不再使用 localStorage 作为业务状态来源，仅保留当前会话内存态
 }
 
 function restoreAudioPreferences() {
-  if (!props.projectId || !props.scriptId) return;
-  try {
-    const raw = localStorage.getItem(audioPreferenceStorageKey.value);
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as {
-      overrides?: Record<number, { source: "video" | "external"; url: string }>;
-      history?: Record<number, string[]>;
-    };
-    if (parsed?.overrides && typeof parsed.overrides === "object") {
-      audioVariantOverrides.value = parsed.overrides;
-    }
-    if (parsed?.history && typeof parsed.history === "object") {
-      audioHistoryByConfig.value = parsed.history;
-    }
-  } catch {}
+  // no-op，保留函数是为了兼容现有调用点
 }
 
 function pushAudioHistory(configId: number, url?: string | null) {
@@ -1011,6 +1004,7 @@ function refreshPlaybackForActiveClip() {
   }
   syncAudioTrack(clip, offset, previewPlaying.value);
   syncDialogueTrack(clip, offset, previewPlaying.value);
+  syncAuxTracksToMainClock();
 }
 
 function shouldIgnoreTimelineSeek(event: MouseEvent) {
@@ -1067,9 +1061,47 @@ function updatePlayhead(event: MouseEvent) {
   const rect = scrollerRef.value.getBoundingClientRect();
   const scrollLeft = scrollerRef.value.scrollLeft;
   const x = event.clientX - rect.left + scrollLeft;
-  const seconds = Math.max(0, Math.min(totalDuration.value, (x - TRACK_LABEL_WIDTH) / PIXELS_PER_SECOND));
+  const seconds = Math.max(0, Math.min(totalDuration.value, (x - TRACK_LABEL_WIDTH) / pixelsPerSecond.value));
   playheadSeconds.value = seconds;
   return seconds;
+}
+
+function adjustTimelineScrollForZoom(previousPps: number, nextPps: number) {
+  if (!scrollerRef.value) return;
+  const anchorTime = playheadSeconds.value;
+  const previousX = TRACK_LABEL_WIDTH + anchorTime * previousPps;
+  const nextX = TRACK_LABEL_WIDTH + anchorTime * nextPps;
+  const delta = nextX - previousX;
+  scrollerRef.value.scrollLeft = Math.max(0, scrollerRef.value.scrollLeft + delta);
+}
+
+function setTimelineZoom(nextIndex: number) {
+  const clamped = Math.min(ZOOM_LEVELS.length - 1, Math.max(0, nextIndex));
+  if (clamped === zoomIndex.value) return;
+  const previousPps = pixelsPerSecond.value;
+  zoomIndex.value = clamped;
+  requestAnimationFrame(() => {
+    adjustTimelineScrollForZoom(previousPps, pixelsPerSecond.value);
+  });
+}
+
+function zoomInTimeline() {
+  setTimelineZoom(zoomIndex.value + 1);
+}
+
+function zoomOutTimeline() {
+  setTimelineZoom(zoomIndex.value - 1);
+}
+
+function resetTimelineZoom() {
+  setTimelineZoom(defaultZoomIndex);
+}
+
+function handleTimelineWheel(event: WheelEvent) {
+  if (!event.ctrlKey) return;
+  event.preventDefault();
+  if (event.deltaY < 0) zoomInTimeline();
+  if (event.deltaY > 0) zoomOutTimeline();
 }
 
 function findClipByTime(time: number) {
@@ -1088,6 +1120,14 @@ function findClipByTime(time: number) {
 function playFromPlayhead() {
   if (!timelineClips.value.length) return;
   seekToTime(playheadSeconds.value, true);
+}
+
+function togglePreviewPlayback() {
+  if (previewPlaying.value) {
+    pausePreview();
+    return;
+  }
+  playFromPlayhead();
 }
 
 function setInspectorSection(section: InspectorSection) {
@@ -1145,10 +1185,69 @@ function handlePreviewFullscreenChange() {
 
 function handleEditorKeydown(event: KeyboardEvent) {
   if (!showModal.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, [contenteditable='true'], .ant-select-dropdown, .ant-select-selection-search-input")) return;
+
   if (event.key === "Tab" && isEditorFullscreen.value) {
     event.preventDefault();
     toggleInspectorPanel();
   }
+
+  if (event.code === "Space") {
+    event.preventDefault();
+    if (previewPlaying.value) {
+      pausePreview();
+    } else {
+      playFromPlayhead();
+    }
+    return;
+  }
+
+  if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+    event.preventDefault();
+    const step = event.shiftKey ? 2 : 0.5;
+    const delta = event.key === "ArrowLeft" ? -step : step;
+    const nextTime = Math.max(0, Math.min(totalDuration.value, playheadSeconds.value + delta));
+    playheadSeconds.value = nextTime;
+    seekToTime(nextTime, previewPlaying.value);
+    return;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && (event.key === "=" || event.key === "+")) {
+    event.preventDefault();
+    zoomInTimeline();
+    return;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key === "-") {
+    event.preventDefault();
+    zoomOutTimeline();
+    return;
+  }
+
+  if ((event.metaKey || event.ctrlKey) && event.key === "0") {
+    event.preventDefault();
+    resetTimelineZoom();
+  }
+}
+
+function syncAuxMediaClock(media: HTMLAudioElement | null, expectedTime: number, playbackRate: number) {
+  if (!media) return;
+  media.playbackRate = playbackRate;
+  if (media.paused) return;
+  if (Math.abs(media.currentTime - expectedTime) > AUX_DRIFT_THRESHOLD) {
+    media.currentTime = Math.max(0, expectedTime);
+  }
+}
+
+function syncAuxTracksToMainClock() {
+  if (!previewVideoRef.value || previewIndex.value == null) return;
+  const clip = timelineClips.value[previewIndex.value];
+  if (!clip) return;
+  const expectedTime = Math.max(0, previewVideoRef.value.currentTime);
+  const rate = previewVideoRef.value.playbackRate || 1;
+  syncAuxMediaClock(previewAudioRef.value, expectedTime, rate);
+  syncAuxMediaClock(previewDialogueRef.value, expectedTime, rate);
 }
 
 function playClip(index: number, offset: number) {
@@ -1164,15 +1263,22 @@ function playClip(index: number, offset: number) {
   previewVideoRef.value.src = src;
   previewVideoRef.value.currentTime = Math.max(0, offset);
   previewVideoRef.value.muted = isTrackMuted("video", 1) || !isTrackVisible("video", 1) || shouldMuteVideoByAudioSource(clip.config);
+  previewVideoRef.value.onratechange = syncAuxTracksToMainClock;
   previewVideoRef.value.ontimeupdate = () => {
     if (previewIndex.value == null || !previewVideoRef.value) return;
     const currentClip = timelineClips.value[previewIndex.value];
     if (!currentClip) return;
     playheadSeconds.value = currentClip.start + previewVideoRef.value.currentTime;
+    syncAuxTracksToMainClock();
   };
-  previewVideoRef.value.play().then(() => {
-    previewPlaying.value = true;
-  });
+  previewVideoRef.value
+    .play()
+    .then(() => {
+      previewPlaying.value = true;
+    })
+    .catch(() => {
+      previewPlaying.value = false;
+    });
   syncAudioTrack(clip, offset, true);
   syncDialogueTrack(clip, offset, true);
 }
@@ -1198,16 +1304,23 @@ function seekToTime(seconds: number, autoPlay: boolean) {
   const applySeek = () => {
     previewVideoRef.value!.currentTime = Math.max(0, offset);
     previewVideoRef.value!.muted = isTrackMuted("video", 1) || !isTrackVisible("video", 1) || shouldMuteVideoByAudioSource(clip.config);
+    previewVideoRef.value!.onratechange = syncAuxTracksToMainClock;
     previewVideoRef.value!.ontimeupdate = () => {
       if (previewIndex.value == null || !previewVideoRef.value) return;
       const currentClip = timelineClips.value[previewIndex.value];
       if (!currentClip) return;
       playheadSeconds.value = currentClip.start + previewVideoRef.value.currentTime;
+      syncAuxTracksToMainClock();
     };
     if (autoPlay) {
-      previewVideoRef.value!.play().then(() => {
-        previewPlaying.value = true;
-      });
+      previewVideoRef
+        .value!.play()
+        .then(() => {
+          previewPlaying.value = true;
+        })
+        .catch(() => {
+          previewPlaying.value = false;
+        });
     } else {
       previewVideoRef.value!.pause();
       previewPlaying.value = false;
@@ -1245,8 +1358,10 @@ function handlePreviewEnded() {
 function syncAudioTrack(clip: { config: VideoConfig }, offset: number, autoPlay: boolean) {
   const trackIndex = Number(clip.config.audioTrack || 1);
   const shouldPlay = !isTrackMuted("audio", trackIndex) && isTrackVisible("audio", trackIndex);
+  const playbackRate = previewVideoRef.value?.playbackRate || 1;
   if (!previewAudioRef.value) {
     previewAudioRef.value = new Audio();
+    previewAudioRef.value.preload = "auto";
   }
   previewAudioRef.value.pause();
   if (!shouldPlay) return;
@@ -1254,6 +1369,7 @@ function syncAudioTrack(clip: { config: VideoConfig }, offset: number, autoPlay:
   if (source.source !== "external" || !source.url) return;
   previewAudioRef.value.src = source.url;
   previewAudioRef.value.currentTime = Math.max(0, offset);
+  previewAudioRef.value.playbackRate = playbackRate;
   if (autoPlay) {
     previewAudioRef.value.play().catch(() => {});
   }
@@ -1263,13 +1379,16 @@ function syncDialogueTrack(clip: { config: VideoConfig }, offset: number, autoPl
   const trackIndex = Number(clip.config.dialogueTrack || 1);
   const shouldPlay = !isTrackMuted("dialogue", trackIndex) && isTrackVisible("dialogue", trackIndex);
   const src = clip.config.ttsAudioPath || "";
+  const playbackRate = previewVideoRef.value?.playbackRate || 1;
   if (!previewDialogueRef.value) {
     previewDialogueRef.value = new Audio();
+    previewDialogueRef.value.preload = "auto";
   }
   previewDialogueRef.value.pause();
   if (!src || !shouldPlay) return;
   previewDialogueRef.value.src = src;
   previewDialogueRef.value.currentTime = Math.max(0, offset);
+  previewDialogueRef.value.playbackRate = playbackRate;
   if (autoPlay) {
     previewDialogueRef.value.play().catch(() => {});
   }
@@ -1561,6 +1680,10 @@ onBeforeUnmount(() => {
   margin-top: 0;
 }
 
+.timelineBody.fullscreen .timelineBodyContent {
+  overflow: hidden;
+}
+
 .editorFloatingActions {
   display: flex;
   justify-content: flex-end;
@@ -1575,7 +1698,8 @@ onBeforeUnmount(() => {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 328px;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  overflow: hidden;
 }
 
 .timelineBodyContent.noInspector {
@@ -1588,6 +1712,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow: hidden;
 }
 
 .previewPanel {
@@ -1645,6 +1770,33 @@ onBeforeUnmount(() => {
   }
 }
 
+.previewVideo:fullscreen,
+.previewVideo:-webkit-full-screen {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-items: stretch;
+  background: #020617;
+  border-radius: 0;
+  padding: 20px 28px;
+  height: 100vh;
+}
+
+.previewVideo:fullscreen .videoPlayer,
+.previewVideo:-webkit-full-screen .videoPlayer {
+  width: 100%;
+  height: 100%;
+  max-height: calc(100vh - 108px);
+  object-fit: contain;
+  background: #020617;
+}
+
+.previewVideo:fullscreen .globalProgress,
+.previewVideo:-webkit-full-screen .globalProgress {
+  width: min(1200px, 100%);
+  justify-self: center;
+  padding: 8px 0 0;
+}
+
 .previewActionBar {
   margin-top: 10px;
   display: grid;
@@ -1687,6 +1839,53 @@ onBeforeUnmount(() => {
 
 .previewActionRight {
   justify-self: end;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.zoomControl {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #d7dfee;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fbff;
+}
+
+.zoomBtn,
+.zoomReset {
+  border: none;
+  background: transparent;
+  color: #334155;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.zoomBtn:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.zoomReset {
+  border-left: 1px solid #d7dfee;
+  border-right: 1px solid #d7dfee;
+  min-width: 58px;
+}
+
+.transportBtn {
+  min-width: 86px;
+}
+
+:deep(.transportBtn.ant-btn-primary) {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: #1d4ed8;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.28);
 }
 
 :deep(.previewActionCenter .ant-btn),
@@ -1928,6 +2127,7 @@ onBeforeUnmount(() => {
   padding: 12px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow-y: auto;
 }
 

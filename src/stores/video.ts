@@ -50,6 +50,31 @@ export interface VideoResult {
   errorReason?: string;
 }
 
+type VideoResultPayload = Partial<VideoResult> & {
+  id?: number;
+  scriptId?: number;
+  configId?: number;
+  state?: 0 | 1 | -1;
+  filePath?: string;
+  firstFrame?: string;
+  duration?: number;
+  time?: number;
+  prompt?: string;
+  createdAt?: string;
+  errorReason?: string;
+};
+
+type VideoConfigPayload = Partial<VideoConfig> & {
+  id?: number;
+  scriptId?: number;
+  projectId?: number;
+};
+
+function toPayloadArray<T extends object>(data: unknown): T[] {
+  if (!Array.isArray(data)) return [];
+  return data.filter((item): item is T => typeof item === "object" && item !== null);
+}
+
 export default defineStore(
   "video",
   () => {
@@ -107,13 +132,14 @@ export default defineStore(
           specifyIds: specifyIds,
         };
         const { data } = await axios.post("/video/getVideo", reqBodyObj);
+        const payloadList = toPayloadArray<VideoResultPayload>(data);
 
         if (specifyIds.length > 0) {
           // 部分更新：只更新指定ID的结果状态
-          if (data.length === 0) return;
+          if (payloadList.length === 0) return;
           // 创建新数组以触发响应式更新
           const updatedResults = videoResults.value.map((r) => {
-            const updated = data.find((item: any) => item.id === r.id);
+            const updated = payloadList.find((item) => Number(item.id) === r.id);
             if (updated) {
               return {
                 ...r,
@@ -131,7 +157,7 @@ export default defineStore(
         } else {
           // 全量更新：解析后端数据，转换为结果列表
           // 只处理视频结果，不再重建配置（配置从 fetchVideoConfigs 获取）
-          parseVideoResults(data, scriptId);
+          parseVideoResults(payloadList, scriptId);
         }
       } catch (error) {
         console.error("获取视频数据失败:", error);
@@ -155,18 +181,18 @@ export default defineStore(
     }
 
     // 解析后端视频数据为结果列表（不再重建配置）
-    function parseVideoResults(data: any[], scriptId: number) {
+    function parseVideoResults(data: VideoResultPayload[], scriptId: number) {
       // 全量刷新时，直接替换当前脚本的结果，避免草稿负ID被重复追加
-      const newResults: VideoResult[] = data.map((item: any) => ({
-        id: item.id,
+      const newResults: VideoResult[] = data.map((item) => ({
+        id: Number(item.id || 0),
         scriptId: item.scriptId || scriptId,
         configId: item.configId || 0, // 后端应该返回 configId
-        state: item.state,
+        state: Number(item.state || 0) as 0 | 1 | -1,
         filePath: item.filePath || "",
         firstFrame: item.firstFrame || "",
         duration: item.duration || item.time || 0,
         prompt: item.prompt || "",
-        createdAt: new Date().toISOString(),
+        createdAt: item.createdAt || new Date().toISOString(),
         errorReason: item.errorReason || "",
       }));
 
@@ -182,69 +208,72 @@ export default defineStore(
     async function fetchVideoConfigs(scriptId: number) {
       try {
         const { data } = await axios.post("/video/getVideoConfigs", { scriptId });
-        if (data && Array.isArray(data)) {
-          // 过滤掉当前脚本的旧配置
-          videoConfigs.value = [];
-          // 添加从后端获取的配置
-          data.forEach((item: any) => {
-            const config: VideoConfig = {
-              id: item.id,
-              scriptId: item.scriptId,
-              projectId: item.projectId,
-              model: item.model,
-              aiConfigId: item.aiConfigId,
-              manufacturer: item.manufacturer,
-              mode: item.mode,
-              startFrame: item.startFrame,
-              endFrame: item.endFrame,
-              images: item.images || [],
-              resolution: item.resolution,
-              duration: item.duration,
-              prompt: item.prompt || "",
-              selectedResultId: Number.isFinite(Number(item.selectedResultId)) ? Number(item.selectedResultId) : null,
-              createdAt: item.createdAt || new Date().toISOString(),
-              audioEnabled: item.audioEnabled,
-              dialogue: item.dialogue || "",
-              audioPath: item.audioPath || "",
-              ttsAudioPath: item.ttsAudioPath || "",
-              sort: Number.isFinite(Number(item.sort)) ? Number(item.sort) : null,
-              voiceConfigId: Number.isFinite(Number(item.voiceConfigId)) ? Number(item.voiceConfigId) : null,
-              voicePresetId: item.voicePresetId || "",
-              audioTrack: Number.isFinite(Number(item.audioTrack)) ? Number(item.audioTrack) : 1,
-              dialogueTrack: Number.isFinite(Number(item.dialogueTrack)) ? Number(item.dialogueTrack) : 1,
-            };
-            videoConfigs.value.push(config);
+        const payloadList = toPayloadArray<VideoConfigPayload>(data);
+        const parsedConfigs: VideoConfig[] = payloadList.map((item) => ({
+          id: Number(item.id || 0),
+          scriptId: Number(item.scriptId || scriptId),
+          projectId: Number(item.projectId || currentProjectId.value || 0),
+          model: item.model || "",
+          aiConfigId: item.aiConfigId,
+          manufacturer: item.manufacturer || "",
+          mode: (item.mode || "startEnd") as VideoConfig["mode"],
+          startFrame: item.startFrame || null,
+          endFrame: item.endFrame || null,
+          images: item.images || [],
+          resolution: item.resolution || "",
+          duration: Number(item.duration || 0),
+          prompt: item.prompt || "",
+          selectedResultId: Number.isFinite(Number(item.selectedResultId)) ? Number(item.selectedResultId) : null,
+          createdAt: item.createdAt || new Date().toISOString(),
+          audioEnabled: Boolean(item.audioEnabled),
+          dialogue: item.dialogue || "",
+          audioPath: item.audioPath || "",
+          ttsAudioPath: item.ttsAudioPath || "",
+          sort: Number.isFinite(Number(item.sort)) ? Number(item.sort) : null,
+          voiceConfigId: Number.isFinite(Number(item.voiceConfigId)) ? Number(item.voiceConfigId) : null,
+          voicePresetId: item.voicePresetId || "",
+          audioTrack: Number.isFinite(Number(item.audioTrack)) ? Number(item.audioTrack) : 1,
+          dialogueTrack: Number.isFinite(Number(item.dialogueTrack)) ? Number(item.dialogueTrack) : 1,
+        }));
 
-            // 更新configIdCounter
-            if (config.id > configIdCounter) {
-              configIdCounter = config.id;
-            }
-          });
-        }
+        // 仅替换当前脚本的数据，避免误清空其它脚本缓存
+        const others = videoConfigs.value.filter((item) => item.scriptId !== scriptId);
+        videoConfigs.value = [...others, ...parsedConfigs];
+
+        const maxId = parsedConfigs.reduce((max, item) => Math.max(max, item.id), configIdCounter);
+        configIdCounter = Math.max(configIdCounter, maxId);
       } catch (error) {
         console.error("获取视频配置失败:", error);
       }
     }
 
     // 从后端返回的数据添加配置（用于新增配置后）
-    function addConfigFromBackend(configData: any): VideoConfig {
+    function addConfigFromBackend(configData: VideoConfigPayload): VideoConfig {
       const newConfig: VideoConfig = {
-        id: configData.id,
-        scriptId: configData.scriptId,
-        projectId: configData.projectId,
-        model: configData.model,
+        id: Number(configData.id || 0),
+        scriptId: Number(configData.scriptId || 0),
+        projectId: Number(configData.projectId || 0),
+        model: configData.model || "",
         aiConfigId: configData.aiConfigId,
-        manufacturer: configData.manufacturer,
-        mode: configData.mode,
+        manufacturer: configData.manufacturer || "",
+        mode: (configData.mode || "startEnd") as VideoConfig["mode"],
         startFrame: configData.startFrame || null,
         endFrame: configData.endFrame || null,
         images: configData.images || [],
-        resolution: configData.resolution,
-        duration: configData.duration,
+        resolution: configData.resolution || "",
+        duration: Number(configData.duration || 0),
         prompt: configData.prompt || "",
         selectedResultId: Number.isFinite(Number(configData.selectedResultId)) ? Number(configData.selectedResultId) : null,
         createdAt: configData.createdAt || new Date().toISOString(),
         audioEnabled: configData.audioEnabled,
+        dialogue: configData.dialogue || "",
+        audioPath: configData.audioPath || "",
+        ttsAudioPath: configData.ttsAudioPath || "",
+        sort: Number.isFinite(Number(configData.sort)) ? Number(configData.sort) : null,
+        voiceConfigId: Number.isFinite(Number(configData.voiceConfigId)) ? Number(configData.voiceConfigId) : null,
+        voicePresetId: configData.voicePresetId || "",
+        audioTrack: Number.isFinite(Number(configData.audioTrack)) ? Number(configData.audioTrack) : 1,
+        dialogueTrack: Number.isFinite(Number(configData.dialogueTrack)) ? Number(configData.dialogueTrack) : 1,
       };
       videoConfigs.value.unshift(newConfig);
 
@@ -401,13 +430,23 @@ export default defineStore(
     function updateConfigFull(
       configId: number,
       updates: Partial<
-        Pick<VideoConfig, "prompt" | "resolution" | "duration" | "startFrame" | "endFrame" | "images" | "mode" | "audioEnabled" | "aiConfigId" | "manufacturer" | "model">
+        Pick<
+          VideoConfig,
+          | "prompt"
+          | "resolution"
+          | "duration"
+          | "startFrame"
+          | "endFrame"
+          | "images"
+          | "mode"
+          | "audioEnabled"
+          | "aiConfigId"
+          | "manufacturer"
+          | "model"
+        >
       >,
     ) {
-      console.log("%c Line:338 🍐 updates", "background:#465975", updates);
-
       const config = videoConfigs.value.find((c) => c.id === configId);
-      console.log("%c Line:342 🌰 config", "background:#fca650", config);
       if (config) {
         if (updates.aiConfigId !== undefined) config.aiConfigId = updates.aiConfigId;
         if (updates.manufacturer !== undefined) config.manufacturer = updates.manufacturer;

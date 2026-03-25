@@ -39,14 +39,30 @@
 
       <!-- 右侧：生成结果列表 -->
       <div class="right-panel">
-        <h3 class="section-title">
-          生成结果
-          <span class="result-count" v-if="results.length">{{ results.length }}个</span>
-        </h3>
+        <div class="result-toolbar">
+          <h3 class="section-title">
+            生成结果
+            <span class="result-count" v-if="results.length">{{ results.length }}个</span>
+          </h3>
+          <div class="result-filters">
+            <button
+              v-for="item in resultFilterOptions"
+              :key="item.key"
+              class="result-filter-btn"
+              :class="{ active: resultFilter === item.key }"
+              @click="resultFilter = item.key">
+              <span>{{ item.label }}</span>
+              <span class="num">{{ resultCountByFilter(item.key) }}</span>
+            </button>
+            <a-button size="small" :loading="refreshingRunningResults" :disabled="runningResultIds.length === 0" @click="refreshAllRunningResults">
+              刷新生成中
+            </a-button>
+          </div>
+        </div>
 
-        <div class="results-list" v-if="results.length">
+        <div class="results-list" v-if="displayResults.length">
           <div
-            v-for="result in results"
+            v-for="result in displayResults"
             :key="result.id"
             class="result-card"
             :class="{
@@ -54,8 +70,10 @@
               success: result.state === 1,
               generating: result.state === 0,
               failed: result.state === -1,
+              selectable: result.state === 1,
+              nonSelectable: result.state !== 1,
             }"
-            @click="handleSelectResult(result)">
+            @click="result.state === 1 && handleSelectResult(result)">
             <!-- 成功状态 -->
             <template v-if="result.state === 1">
               <div class="video-cover" @click.stop="playVideo(result)">
@@ -109,8 +127,8 @@
           <div class="empty-icon">
             <i-film :size="48" />
           </div>
-          <p class="empty-title">暂无生成结果</p>
-          <p class="empty-desc">点击左侧按钮开始生成视频</p>
+          <p class="empty-title">{{ emptyResultTitle }}</p>
+          <p class="empty-desc">{{ emptyResultDesc }}</p>
         </div>
       </div>
     </div>
@@ -137,6 +155,12 @@ type DraftVideoConfig = VideoConfigData & {
   selectedResultId?: number | null;
   selectedResultState?: number;
 };
+type ResultFilter = "all" | "success" | "running" | "failed";
+type PartScriptItem = {
+  id?: number;
+  content?: string;
+  name?: string;
+};
 
 const props = defineProps<{
   configId: number | null;
@@ -160,6 +184,8 @@ const scriptContent = ref("");
 const scriptTitle = ref("");
 const scriptLoading = ref(false);
 const refreshingResultIds = ref<number[]>([]);
+const refreshingRunningResults = ref(false);
+const resultFilter = ref<ResultFilter>("all");
 
 // 可编辑配置（将 VideoConfig 转换为 VideoConfigData 格式）
 const editableConfig = ref<VideoConfigData | null>(null);
@@ -190,8 +216,26 @@ const results = computed(() => {
   if (!props.configId) return [];
   return store.getResultsByConfigId(Number(props.configId));
 });
+const resultFilterOptions: Array<{ key: ResultFilter; label: string }> = [
+  { key: "all", label: "全部" },
+  { key: "success", label: "成功" },
+  { key: "running", label: "生成中" },
+  { key: "failed", label: "失败" },
+];
+const displayResults = computed(() => {
+  const sorted = [...results.value].sort((a, b) => b.id - a.id);
+  if (resultFilter.value === "all") return sorted;
+  if (resultFilter.value === "success") return sorted.filter((item) => item.state === 1);
+  if (resultFilter.value === "running") return sorted.filter((item) => item.state === 0);
+  return sorted.filter((item) => item.state === -1);
+});
+const runningResultIds = computed(() => results.value.filter((item) => item.state === 0).map((item) => item.id));
+const emptyResultTitle = computed(() => (resultFilter.value === "all" ? "暂无生成结果" : "当前筛选下暂无结果"));
+const emptyResultDesc = computed(() => (resultFilter.value === "all" ? "点击左侧按钮开始生成视频" : "可切换筛选查看其它状态"));
+
 watch(modalVisible, (v) => {
   if (v) {
+    resultFilter.value = "all";
     getModelList();
   }
 });
@@ -208,8 +252,8 @@ async function loadScriptContent() {
   scriptLoading.value = true;
   try {
     const { data } = await axios.post("/outline/getPartScript", { projectId });
-    const list = Array.isArray(data) ? data : [];
-    const target = list.find((item: any) => Number(item?.id) === scriptId);
+    const list = Array.isArray(data) ? (data as PartScriptItem[]) : [];
+    const target = list.find((item) => Number(item?.id) === scriptId);
     scriptContent.value = String(target?.content || "");
     scriptTitle.value = target?.name ? `剧本：${target.name}` : `剧本：第${scriptId}集`;
   } catch (error) {
@@ -302,7 +346,7 @@ async function handleConfigFormChange(updatedConfig: VideoConfigData) {
       images: updatedConfig.images,
       audioEnabled: updatedConfig.audioEnabled,
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("更新配置失败:", error);
   }
 }
@@ -374,8 +418,8 @@ async function handleGenerate() {
         void store.fetchVideoData(config.value!.scriptId);
       }, 1200);
     }
-  } catch (error: any) {
-    message.error(error?.message || "生成失败");
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : "生成失败");
   } finally {
     isGenerating.value = false;
   }
@@ -402,10 +446,45 @@ async function handleRefreshResult(resultId: number) {
     } else {
       message.info("远端任务仍在处理中");
     }
-  } catch (error: any) {
-    message.error(error?.message || "刷新状态失败");
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : "刷新状态失败");
   } finally {
     refreshingResultIds.value = refreshingResultIds.value.filter((id) => id !== resultId);
+  }
+}
+
+function resultCountByFilter(filter: ResultFilter) {
+  if (filter === "all") return results.value.length;
+  if (filter === "success") return results.value.filter((item) => item.state === 1).length;
+  if (filter === "running") return results.value.filter((item) => item.state === 0).length;
+  return results.value.filter((item) => item.state === -1).length;
+}
+
+async function refreshAllRunningResults() {
+  const scriptId = Number(config.value?.scriptId || props.draftConfig?.scriptId || 0);
+  const ids = [...runningResultIds.value];
+  if (!scriptId || ids.length === 0) {
+    message.info("当前没有生成中的任务");
+    return;
+  }
+  if (refreshingRunningResults.value) return;
+
+  refreshingRunningResults.value = true;
+  try {
+    const data = await store.refreshRemoteStatus(scriptId, ids);
+    if (data.refreshed > 0 && data.unsupported === data.refreshed) {
+      message.warning("当前模型暂不支持远端刷新");
+    } else if (data.success > 0) {
+      message.success(`已刷新 ${data.success} 个任务`);
+    } else if (data.failed > 0) {
+      message.warning("部分任务已失败，请查看失败原因");
+    } else {
+      message.info("远端任务仍在处理中");
+    }
+  } catch (error: unknown) {
+    message.error(error instanceof Error ? error.message : "刷新状态失败");
+  } finally {
+    refreshingRunningResults.value = false;
   }
 }
 
@@ -434,7 +513,7 @@ async function handleSelectResult(result: VideoResult) {
       selectedResultId: result.id,
     });
     message.success("已选择此视频");
-  } catch (error: any) {
+  } catch (error: unknown) {
     message.error("选择失败");
     console.error("更新选中结果失败:", error);
   }
@@ -536,8 +615,8 @@ onMounted(() => {
           .loading-spinner {
             width: 18px;
             height: 18px;
-            border: 2px solid rgba(147, 51, 234, 0.2);
-            border-top-color: #9333ea;
+            border: 2px solid rgba(37, 99, 235, 0.2);
+            border-top-color: #2563eb;
             border-radius: 50%;
             animation: spin 0.9s linear infinite;
           }
@@ -550,22 +629,65 @@ onMounted(() => {
     flex: 1;
     min-width: 0;
 
+    .result-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
     .section-title {
       display: flex;
       align-items: center;
       gap: 10px;
-      margin: 0 0 16px;
+      margin: 0;
       font-size: 16px;
       font-weight: 600;
       color: #1f2937;
 
       .result-count {
         padding: 2px 10px;
-        background: rgba(147, 51, 234, 0.1);
-        color: #9333ea;
+        background: rgba(37, 99, 235, 0.1);
+        color: #1d4ed8;
         border-radius: 20px;
         font-size: 12px;
         font-weight: 500;
+      }
+    }
+
+    .result-filters {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .result-filter-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      border: 1px solid #dbe3ef;
+      background: #fff;
+      color: #4f5f79;
+      font-size: 12px;
+      cursor: pointer;
+
+      .num {
+        min-width: 18px;
+        text-align: center;
+        font-weight: 600;
+        color: #637085;
+      }
+
+      &.active {
+        border-color: #2563eb;
+        background: #eff6ff;
+        color: #1d4ed8;
       }
     }
 
@@ -580,11 +702,20 @@ onMounted(() => {
         overflow: hidden;
         border: 2px solid transparent;
         transition: all 0.2s ease;
-        cursor: pointer;
+        cursor: default;
+
+        &.selectable {
+          cursor: pointer;
+        }
 
         &:hover {
-          border-color: rgba(147, 51, 234, 0.3);
+          border-color: rgba(37, 99, 235, 0.28);
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        &.nonSelectable:hover {
+          border-color: transparent;
+          box-shadow: none;
         }
 
         .video-cover {
@@ -603,13 +734,13 @@ onMounted(() => {
           .video-placeholder {
             width: 100%;
             height: 100%;
-            background: linear-gradient(135deg, #f3e8ff, #e9d5ff);
+            background: linear-gradient(135deg, #dbeafe, #bfdbfe);
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             gap: 8px;
-            color: #9333ea;
+            color: #1d4ed8;
 
             span {
               font-size: 13px;
@@ -653,7 +784,7 @@ onMounted(() => {
             display: flex;
             align-items: center;
             gap: 4px;
-            color: #9333ea;
+            color: #1d4ed8;
             font-size: 13px;
             font-weight: 500;
           }
@@ -668,19 +799,19 @@ onMounted(() => {
           gap: 10px;
 
           &.generating {
-            background: linear-gradient(135deg, #f3e8ff, #e9d5ff);
+            background: linear-gradient(135deg, #dbeafe, #bfdbfe);
 
             .loading-spinner {
               width: 32px;
               height: 32px;
               border: 3px solid #e5e7eb;
-              border-top-color: #9333ea;
+              border-top-color: #2563eb;
               border-radius: 50%;
               animation: spin 1s linear infinite;
             }
 
             span {
-              color: #7c3aed;
+              color: #1d4ed8;
               font-size: 13px;
             }
           }
@@ -710,12 +841,12 @@ onMounted(() => {
       .empty-icon {
         width: 80px;
         height: 80px;
-        background: linear-gradient(135deg, #f3e8ff, #e9d5ff);
+        background: linear-gradient(135deg, #dbeafe, #bfdbfe);
         border-radius: 50%;
         display: flex;
         align-items: center;
         justify-content: center;
-        color: #9333ea;
+        color: #1d4ed8;
         margin-bottom: 16px;
       }
 
