@@ -150,9 +150,9 @@
         function getBaseUrl() {
           try {
             const fromQuery = new URLSearchParams(location.search).get("baseUrl");
-            return fromQuery || "http://localhost:60000";
+            return fromQuery || "http://localhost:60002";
           } catch (err) {
-            return "http://localhost:60000";
+            return "http://localhost:60002";
           }
         }
 
